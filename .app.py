@@ -1,81 +1,110 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import urllib.parse
+-- تحديد الأدوار بشكل صارم
+CREATE TYPE user_role AS ENUM ('super_admin', 'back_office', 'accountant', 'sales_rep', 'merchant');
 
-# إعدادات واجهة البرنامج
-st.set_page_config(page_title="B2B Smart Platform", layout="wide")
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    phone_number VARCHAR(15) UNIQUE NOT NULL, -- مفتاح الحساب
+    full_name VARCHAR(100),
+    role user_role NOT NULL,
+    territory_id INT, -- ربط المندوب أو التاجر بمنطقته
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE territories (
+    id SERIAL PRIMARY KEY,
+    governorate VARCHAR(50), -- المحافظة
+    city VARCHAR(50),        -- المركز
+    zone_name VARCHAR(50),   -- منطقة التوزيع
+    assigned_warehouse_id INT, -- المخزن المسؤول عن هذه المنطقة
+    assigned_sales_rep_id INT  -- المندوب المسؤول عن هذه المنطقة
+);
+async function getProductPrice(merchantId, productId) {
+    const merchant = await db.merchants.find(merchantId);
+    const product = await db.products.find(productId);
+    
+    let finalPrice = product.base_price;
 
-# --- محاكاة الربط مع قاعدة البيانات ---
-# ملاحظة: في النسخة الفعلية يتم استخدام st.connection("gsheets")
-if 'orders_df' not in st.session_state:
-    st.session_state.orders_df = pd.DataFrame(columns=['ID', 'Merchant', 'Phone', 'Total', 'Status'])
+    // 1. تسعير حسب فئة التاجر (جملة، نصف جملة، تجزئة)
+    if (merchant.type === 'WHOLESALE') finalPrice -= product.wholesale_discount;
 
-# بيانات التجار الثابتة
-merchants = {
-    'محل الأمانة': {'phone': '201012345678', 'limit': 10000, 'balance': 2500},
-    'سوبر ماركت النور': {'phone': '201212345678', 'limit': 5000, 'balance': 4800}
+    // 2. تسعير حسب المنطقة (مصاريف شحن أو دعم منطقة)
+    const zonePremium = await db.zone_prices.find(merchant.zone_id, productId);
+    if (zonePremium) finalPrice += zonePremium.adjustment;
+
+    // 3. عروض مؤقتة
+    const activePromo = await db.promotions.findActive(productId);
+    if (activePromo) finalPrice -= activePromo.discount_value;
+
+    return finalPrice;
 }
+async function validateOrder(orderRequest) {
+    const merchant = await db.merchants.find(orderRequest.merchantId);
 
-# --- القائمة الجانبية (الأيقونات) ---
-st.sidebar.title("🚀 نظام B2B الشامل")
-role = st.sidebar.selectbox("تبديل الحساب:", ["التاجر", "المحاسب", "الإدارة العليا", "المندوب"])
+    // شرط 1: حالة الحساب
+    if (!merchant.is_active) throw new Error("الحساب موقوف، يرجى التواصل مع الإدارة");
 
-# 1. واجهة التاجر: إنشاء الطلب والتحقق من الائتمان
-if role == "التاجر":
-    st.header("🛒 متجر التاجر المباشر")
-    selected_m = st.selectbox("اختر حسابك:", list(merchants.keys()))
-    m_data = merchants[selected_m]
+    // شرط 2: الحد الائتماني
+    const currentDebt = merchant.balance;
+    if ((currentDebt + orderRequest.total) > merchant.credit_limit) {
+        throw new Error("عفواً، لقد تخطيت الحد الائتماني المسموح به");
+    }
+
+    // شرط 3: توفر المخزون في أقرب مخزن
+    const stock = await db.inventory.check(merchant.territory.warehouse_id, orderRequest.items);
+    if (!stock.available) throw new Error("بعض الأصناف غير متوفرة في مخزن منطقتك");
     
-    st.metric("الرصيد المتاح للطلب", f"{m_data['limit'] - m_data['balance']} ج.م")
-    
-    with st.form("order_form"):
-        product = st.selectbox("الصنف", ["زيت كرتونة", "سكر كرتونة"])
-        amount = st.number_input("الكمية", min_value=1)
-        price = 600 if "زيت" in product else 400
-        total = amount * price
-        submit = st.form_submit_button("تثبيت الطلب")
-        
-        if submit:
-            if (m_data['balance'] + total) > m_data['limit']:
-                st.error("⚠️ فشل الطلب: لقد تجاوزت الحد الائتماني!")
-            else:
-                new_order = {'ID': len(st.session_state.orders_df)+1, 'Merchant': selected_m, 
-                             'Phone': m_data['phone'], 'Total': total, 'Status': 'معلق'}
-                st.session_state.orders_df = st.session_state.orders_df.append(new_order, ignore_index=True)
-                st.success(f"✅ تم تسجيل الطلب رقم {new_id} بنجاح")
+    return "Order Validated";
+}
+CREATE TABLE merchants (
+    id SERIAL PRIMARY KEY,
+    business_name VARCHAR(255) NOT NULL,
+    owner_name VARCHAR(255),
+    phone_key VARCHAR(15) UNIQUE NOT NULL, -- رقم الهاتف هو الهوية (Login)
+    gps_lat DECIMAL(10, 8),
+    gps_long DECIMAL(11, 8),
+    territory_id INT REFERENCES territories(id),
+    merchant_type ENUM('Wholesale', 'Retail', 'Supermarket'), -- أنواع التجار للتسعير
+    credit_limit DECIMAL(12, 2) DEFAULT 0.00, -- الحد الائتماني
+    payment_terms_days INT DEFAULT 30, -- فترة السداد (مثلاً 30 يوم)
+    current_balance DECIMAL(12, 2) DEFAULT 0.00, -- الرصيد الحالي
+    is_active BOOLEAN DEFAULT true -- حالة الحساب
+);
+CREATE TABLE products (
+    sku_id SERIAL PRIMARY KEY,
+    product_name VARCHAR(255),
+    barcode VARCHAR(50) UNIQUE,
+    unit_type ENUM('Carton', 'Packet'), -- وحدة البيع
+    pieces_per_unit INT, -- عدد القطع بالكرتونة
+    weight DECIMAL(5, 2),
+    expiry_date DATE,
+    base_price DECIMAL(10, 2) -- السعر الأساسي قبل الخصومات
+);
 
-# 2. واجهة المحاسب: الاعتماد وواتساب
-elif role == "المحاسب":
-    st.header("💰 اعتماد المدفوعات والفواتير")
-    pending = st.session_state.orders_df[st.session_state.orders_df['Status'] == 'معلق']
-    
-    if pending.empty:
-        st.write("لا توجد طلبات جديدة.")
-    else:
-        for index, row in pending.iterrows():
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.info(f"طلب من {row['Merchant']} بقيمة {row['Total']} ج.م")
-            with col2:
-                if st.button(f"اعتماد #{row['ID']}"):
-                    st.session_state.orders_df.at[index, 'Status'] = 'تم الاعتماد'
-                    # تجهيز رسالة واتساب
-                    msg = f"تم اعتماد طلبك رقم {row['ID']} بقيمة {row['Total']} ج.م. سيصلك المندوب قريباً."
-                    wa_link = f"https://wa.me/{row['Phone']}?text={urllib.parse.quote(msg)}"
-                    st.markdown(f'<a href="{wa_link}" target="_blank" style="background-color:#25D366;color:white;padding:10px;border-radius:5px;text-decoration:none;">إرسال فاتورة واتساب 💬</a>', unsafe_allow_html=True)
+CREATE TABLE warehouse_stock (
+    warehouse_id INT REFERENCES warehouses(id),
+    product_id INT REFERENCES products(sku_id),
+    quantity INT DEFAULT 0, -- الكمية المتوفرة في هذا المخزن تحديداً
+    min_order_limit INT DEFAULT 1,
+    PRIMARY KEY (warehouse_id, product_id)
+);
+// دالة حساب السعر للتاجر عند فتح التطبيق
+function calculateMerchantPrice(product, merchant) {
+    let finalPrice = product.base_price;
 
-# 3. واجهة الإدارة: الرقابة والتقارير
-elif role == "الإدارة العليا":
-    st.header("📊 لوحة تحكم الإدارة")
-    st.dataframe(st.session_state.orders_df)
-    total_sales = st.session_state.orders_df[st.session_state.orders_df['Status'] == 'تم الاعتماد']['Total'].sum()
-    st.metric("إجمالي المبيعات المعتمدة", f"{total_sales} ج.م")
+    // 1. خصم نوع التاجر (مثلاً الجملة خصم 5%)
+    if (merchant.merchant_type === 'Wholesale') {
+        finalPrice *= 0.95;
+    }
 
-# 4. واجهة المندوب: الـ GPS والتسليم
-else:
-    st.header("🚚 تطبيق المندوب")
-    st.info("📍 يتم الآن التحقق من موقعك عبر GPS...")
-    st.success("الموقع مطابق لنطاق التاجر. يمكنك تسليم الشحنة.")
-    if st.button("تأكيد التسليم النهائي"):
-        st.balloons()
+    // 2. خصم شريحة الكمية (مثلاً أكثر من 10 كراتين)
+    if (order.quantity >= 10) {
+        finalPrice -= 5.00; // خصم 5 جنيه على كل كرتونة
+    }
+
+    // 3. العروض المؤقتة (Flash Sales)
+    if (currentDate >= promo.start && currentDate <= promo.end) {
+        finalPrice -= promo.discount;
+    }
+
+    return finalPrice;
+}
