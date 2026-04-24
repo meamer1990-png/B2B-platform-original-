@@ -2,60 +2,62 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-# إعداد الصفحة
-st.set_page_config(page_title="نظام أبو الفتوح للتجارة", layout="wide")
+st.set_page_config(page_title="مجموعة أبو الفتوح للتجارة", layout="wide")
 
-# رابط الشيت الخاص بك
+# الرابط الخاص بملفك
 URL = "https://docs.google.com/spreadsheets/d/1Ey5M-J_O50wvYty00cgZvsyKq_LLcQBmMwKWf_Nl_rk/edit?usp=sharing"
 
-# الاتصال بجوجل شيت
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except:
-    st.error("خطأ في الاتصال بالقاعدة")
+    st.error("فشل الاتصال.. تأكد من صلاحية الرابط في جوجل شيت (Editor)")
 
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
+if 'auth' not in st.session_state:
+    st.session_state.auth = False
 
-# شاشة الدخول
-if not st.session_state.authenticated:
-    st.title("🔐 تسجيل دخول - مجموعة أبو الفتوح")
-    u_input = st.text_input("الاسم")
-    p_input = st.text_input("كلمة المرور", type="password")
+if not st.session_state.auth:
+    st.title("🔐 دخول نظام أبو الفتوح")
+    u_in = st.text_input("الاسم")
+    p_in = st.text_input("كلمة المرور", type="password")
     
     if st.button("دخول"):
         try:
             # قراءة صفحة Users
             df = conn.read(spreadsheet=URL, worksheet="Users")
-            # تنظيف أي مسافات زائدة في أسماء الأعمدة أو البيانات
-            df.columns = df.columns.str.strip()
             
-            # مطابقة البيانات بناءً على العناوين التي حددتها: الاسم | كلمة_المرور | الصلاحية
-            user_row = df[(df['الاسم'].astype(str).str.strip() == u_input.strip()) & 
-                          (df['كلمة_المرور'].astype(str).str.strip() == p_input.strip())]
+            # معالجة ذكية للأعمدة: إزالة المسافات وتوحيد التنسيق
+            df.columns = [str(c).strip() for c in df.columns]
             
-            if not user_row.empty:
-                st.session_state.authenticated = True
-                st.session_state.user_role = user_row.iloc[0]['الصلاحية']
-                st.session_state.user_name = u_input
+            # البحث عن الصفوف المطابقة
+            # نستخدم .astype(str) لضمان مقارنة النصوص بشكل صحيح
+            user_found = df[
+                (df['الاسم'].astype(str).str.strip() == u_in.strip()) & 
+                (df['كلمة_المرور'].astype(str).str.strip() == p_in.strip())
+            ]
+            
+            if not user_found.empty:
+                st.session_state.auth = True
+                st.session_state.role = user_found.iloc[0]['الصلاحية']
+                st.session_state.u_name = u_in
                 st.rerun()
             else:
-                st.error("بيانات الدخول غير صحيحة")
+                st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
+                st.info("تأكد من كتابة البيانات في الشيت بنفس الطريقة (admin1 / 123)")
         except Exception as e:
-            st.error("تأكد من تسمية الصفحة 'Users' والعناوين: الاسم، كلمة_المرور، الصلاحية")
+            st.error(f"حدث خطأ في القراءة: {e}")
+            st.warning("تأكد من تسمية الصفحة بالأسفل Users وأن الأعمدة هي: الاسم | كلمة_المرور | الصلاحية")
 else:
-    # الواجهة الرئيسية بعد الدخول
-    role = st.session_state.user_role
-    st.sidebar.success(f"مرحباً: {st.session_state.user_name}")
-    if st.sidebar.button("تسجيل الخروج"):
-        st.session_state.authenticated = False
+    # واجهة النظام بعد الدخول
+    st.sidebar.success(f"مرحباً: {st.session_state.u_name}")
+    role = st.session_state.role
+    
+    if st.sidebar.button("خروج"):
+        st.session_state.auth = False
         st.rerun()
+        
+    st.header(f"لوحة التحكم - بصلاحية: {role}")
     
-    st.header(f"لوحة تحكم: {role}")
-    
-    # توزيع المهام حسب الصلاحية (Control أو غيرها)
     if role == "Control":
-        st.subheader("إحصائيات الإدارة")
-        # هنا سيتم لاحقاً سحب بيانات من صفحة Orders و Merchants
+        st.subheader("📊 تقارير الإدارة العامة")
     elif role == "Sales":
-        st.subheader("تسجيل طلبات المناديب")
+        st.subheader("📑 تسجيل طلبيات المندوب")
