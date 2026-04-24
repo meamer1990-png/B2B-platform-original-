@@ -6,14 +6,14 @@ import urllib.parse
 # --- إعدادات النظام ---
 st.set_page_config(page_title="مجموعة أبو الفتوح للتجارة", layout="wide")
 
-# الرابط الخاص بملفك
+# الرابط الخاص بملفك (تأكد أنه متاح للجميع Editor)
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ey5M-J_O50wvYty00cgZvsyKq_LLcQBmMwKWf_Nl_rk/edit?usp=sharing"
 
 # --- الاتصال بجوجل شيت ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception:
-    st.error("فشل الاتصال بجدول البيانات. تأكد من تفعيل المشاركة (Anyone with the link can edit).")
+    st.error("فشل الاتصال بجدول البيانات. تأكد من تفعيل المشاركة.")
 
 # --- نظام تسجيل الدخول ---
 if 'logged_in' not in st.session_state:
@@ -29,10 +29,13 @@ if not st.session_state.logged_in:
             # قراءة صفحة المستخدمين
             df_users = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Users")
             
-            # تطابق البيانات مع العناوين العربية في الشيت
-            # تأكد أن العناوين في الشيت هي: اسم المستخدم | كلمة المرور | الصلاحية
-            user_match = df_users[(df_users['اسم المستخدم'].astype(str) == user_input) & 
-                                  (df_users['كلمة المرور'].astype(str) == pw_input)]
+            # تنظيف البيانات من أي مسافات زائدة لضمان المطابقة
+            df_users['اسم المستخدم'] = df_users['اسم المستخدم'].astype(str).str.strip()
+            df_users['كلمة المرور'] = df_users['كلمة المرور'].astype(str).str.strip()
+            
+            # مطابقة البيانات
+            user_match = df_users[(df_users['اسم المستخدم'] == user_input.strip()) & 
+                                  (df_users['كلمة المرور'] == pw_input.strip())]
             
             if not user_match.empty:
                 st.session_state.logged_in = True
@@ -40,26 +43,25 @@ if not st.session_state.logged_in:
                 st.session_state.user_name = user_input
                 st.rerun()
             else:
-                st.error("بيانات الدخول غير صحيحة (تحقق من اسم المستخدم أو الباسورد)")
+                st.error("بيانات الدخول غير صحيحة")
         except Exception as e:
-            st.warning("تأكد أن أسماء الأعمدة في صفحة Users هي: 'اسم المستخدم' و 'كلمة المرور' و 'الصلاحية'")
+            st.error(f"تأكد من وجود صفحة 'Users' والعناوين: اسم المستخدم، كلمة المرور، الصلاحية")
 else:
-    # الواجهة بعد الدخول الناجح
+    # --- الواجهة بعد الدخول الناجح ---
     role = st.session_state.role
     st.sidebar.success(f"مرحباً: {st.session_state.user_name}")
-    st.sidebar.write(f"الصلاحية: {role}")
     
     if st.sidebar.button("تسجيل الخروج"):
         st.session_state.logged_in = False
         st.rerun()
 
-    # استكمال باقي النوافذ (الكنترول، المحاسب، إلخ) بناءً على الصلاحية
+    # توزيع النوافذ حسب الصلاحية المكتوبة في الشيت
     if role == "الكنترول":
-        st.header("🖥️ لوحة تحكم الإدارة")
-        st.info("أهلاً بك يا دكتور محمد في لوحة التحكم الرئيسية.")
+        st.header("🖥️ لوحة تحكم الإدارة العليا")
+        st.write("أهلاً بك يا دكتور محمد.")
     elif role == "المحاسب":
-        st.header("💰 نافذة المحاسبة")
+        st.header("💰 نافذة المحاسبة والمخازن")
     elif role == "مندوب":
-        st.header("🚚 تطبيق الميدان")
+        st.header("🚚 تطبيق الميدان للمناديب")
     elif role == "تاجر":
-        st.header("🏪 نافذة التاجر")
+        st.header("🏪 نافذة التاجر والطلبات")
