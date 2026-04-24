@@ -1,128 +1,65 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 import urllib.parse
 
-# --- 1. إعدادات النظام المتقدمة ---
-st.set_page_config(page_title="B2B Enterprise System", layout="wide")
+# --- إعدادات النظام ---
+st.set_page_config(page_title="مجموعة أبو الفتوح للتجارة", layout="wide")
 
-# --- 2. محاكاة قاعدة البيانات الشاملة (RBAC & Logic) ---
-if 'db' not in st.session_state:
-    st.session_state.db = {
-        'users': [
-            {'name': 'Admin', 'role': 'Super Admin', 'phone': '2010'},
-            {'name': 'Hossam', 'role': 'Accountant', 'phone': '2011'},
-            {'name': 'Maged', 'role': 'Sales Rep', 'phone': '2012'}
-        ],
-        'merchants': [
-            {'name': 'محل الأمانة', 'phone': '201012345678', 'credit_limit': 10000.0, 'balance': 2000.0, 'zone': 'كفر الشيخ', 'status': 'نشط'},
-            {'name': 'سوبر ماركت النور', 'phone': '201212345678', 'credit_limit': 5000.0, 'balance': 4800.0, 'zone': 'سيدي سالم', 'status': 'نشط'}
-        ],
-        'warehouses': {
-            'كفر الشيخ': {'شاي': 100, 'ملح': 200},
-            'سيدي سالم': {'شاي': 50, 'ملح': 30},
-            'المخزن الرئيسي': {'شاي': 1000, 'ملح': 1000}
-        },
-        'orders': []
-    }
+# الرابط الخاص بملفك
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1Ey5M-J_O50wvYty00cgZvsyKq_LLcQBmMwKWf_Nl_rk/edit?usp=sharing"
 
-# --- 3. بوابة الدخول بنظام الأدوار (RBAC) ---
-st.sidebar.title("🔐 نظام الصلاحيات الموحد")
-user_role = st.sidebar.selectbox("الدخول بصلاحية:", 
-    ["Super Admin", "Back Office", "Accountant", "Sales Rep", "Merchant"])
+# --- الاتصال بجوجل شيت ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception:
+    st.error("فشل الاتصال بجدول البيانات. تأكد من تفعيل المشاركة (Anyone with the link can edit).")
 
-# ---------------------------------------------------------
-# 1. Super Admin: الإدارة العليا والنتائج النهائية
-# ---------------------------------------------------------
-if user_role == "Super Admin":
-    st.header("📊 لوحة القيادة - الرقم النهائي")
-    col1, col2, col3 = st.columns(3)
-    total_sales = sum(o['total'] for o in st.session_state.db['orders'] if o['status'] == 'Delivered')
-    col1.metric("إجمالي الأرباح المحققة", f"{total_sales} ج.م")
-    col2.metric("التجار النشطين", len(st.session_state.db['merchants']))
-    col3.metric("المخازن المفعلة", len(st.session_state.db['warehouses']))
-    
-    st.subheader("📦 حالة المخازن والمناطق")
-    st.write(st.session_state.db['warehouses'])
+# --- نظام تسجيل الدخول ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
 
-# ---------------------------------------------------------
-# 2. Accountant: الرقابة المالية والائتمان
-# ---------------------------------------------------------
-elif user_role == "Accountant":
-    st.header("💰 الإدارة المالية والائتمان")
+if not st.session_state.logged_in:
+    st.title("🔐 بوابة الدخول الموحدة - نظام أبو الفتوح")
+    user_input = st.text_input("اسم المستخدم")
+    pw_input = st.text_input("كلمة المرور", type="password")
     
-    tab1, tab2 = st.tabs(["مراجعة الطلبات", "إدارة الائتمان"])
-    
-    with tab1:
-        pending = [o for o in st.session_state.db['orders'] if o['status'] == 'Awaiting Payment']
-        if not pending: st.write("لا توجد فواتير بانتظار الاعتماد.")
-        for i, order in enumerate(pending):
-            if st.button(f"اعتماد تحويل {order['merchant']} بمبلغ {order['total']}"):
-                order['status'] = 'Approved'
-                st.success("تم الاعتماد وتوجيه الطلب للمخزن")
-    
-    with tab2:
-        st.subheader("تعديل حدود الائتمان")
-        df_m = pd.DataFrame(st.session_state.db['merchants'])
-        edited_m = st.data_editor(df_m)
-        if st.button("حفظ تحديثات الائتمان"):
-            st.session_state.db['merchants'] = edited_m.to_dict('records')
-
-# ---------------------------------------------------------
-# 3. Sales Rep: العمل الميداني و GPS Geofencing
-# ---------------------------------------------------------
-elif user_role == "Sales Rep":
-    st.header("🚚 تطبيق المندوب - العمل الميداني")
-    st.info("نظام Geofencing: يتم التحقق من وجودك في نطاق 50 متر من التاجر.")
-    
-    selected_m = st.selectbox("اختر التاجر للزيارة", [m['name'] for m in st.session_state.db['merchants']])
-    location_check = st.checkbox("محاكاة الوصول لموقع التاجر (GPS)")
-    
-    if location_check:
-        st.success("✅ تم التحقق من الموقع. يمكنك البدء.")
-        action = st.radio("الإجراء:", ["زيارة سلبية", "تحصيل كاش", "إنشاء طلب بالنيابة"])
-        if st.button("تسجيل العملية"):
-            st.info("تم المزامنة مع السيرفر الرئيسي.")
-    else:
-        st.error("❌ لا يمكنك تسجيل عملية. أنت خارج نطاق التاجر.")
-
-# ---------------------------------------------------------
-# 4. Merchant: الطلب المباشر والائتمان
-# ---------------------------------------------------------
-elif user_role == "Merchant":
-    st.header("🛒 طلب مباشر (خدمة ذاتية)")
-    m_name = st.selectbox("اختر اسم محلك:", [m['name'] for m in st.session_state.db['merchants']])
-    m_info = next(m for m in st.session_state.db['merchants'] if m['name'] == m_name)
-    
-    st.info(f"المنطقة: {m_info['zone']} | مديونيتك: {m_info['balance']} | حد الائتمان: {m_info['credit_limit']}")
-    
-    item = st.selectbox("المنتج", ["شاي", "ملح"])
-    qty = st.number_input("الكمية", min_value=1)
-    price = 100 # سعر أساسي محاكي
-    total = qty * price
-    
-    if st.button("تأكيد الطلب الآجل"):
-        # محرك الائتمان (Logic)
-        if (m_info['balance'] + total) > m_info['credit_limit']:
-            st.error("❌ الطلب مرفوض: تجاوزت الحد الائتماني المسموح.")
-        else:
-            # التوجيه الذكي (Smart Routing)
-            warehouse = st.session_state.db['warehouses'].get(m_info['zone'], 'المخزن الرئيسي')
-            if warehouse[item] >= qty:
-                new_order = {'id': len(st.session_state.db['orders'])+1, 'merchant': m_name, 'total': total, 'status': 'Approved', 'wh': m_info['zone']}
-                st.session_state.db['orders'].append(new_order)
-                st.success(f"✅ تم التوجيه لمخزن {m_info['zone']} بنجاح")
+    if st.button("دخول"):
+        try:
+            # قراءة صفحة المستخدمين
+            df_users = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Users")
+            
+            # تطابق البيانات مع العناوين العربية في الشيت
+            # تأكد أن العناوين في الشيت هي: اسم المستخدم | كلمة المرور | الصلاحية
+            user_match = df_users[(df_users['اسم المستخدم'].astype(str) == user_input) & 
+                                  (df_users['كلمة المرور'].astype(str) == pw_input)]
+            
+            if not user_match.empty:
+                st.session_state.logged_in = True
+                st.session_state.role = user_match.iloc[0]['الصلاحية']
+                st.session_state.user_name = user_input
+                st.rerun()
             else:
-                st.warning("⚠️ الصنف غير كافٍ في مخزن المنطقة. يتم التحويل للمخزن الرئيسي...")
-                new_order = {'id': len(st.session_state.db['orders'])+1, 'merchant': m_name, 'total': total, 'status': 'Approved', 'wh': 'المخزن الرئيسي'}
-                st.session_state.db['orders'].append(new_order)
+                st.error("بيانات الدخول غير صحيحة (تحقق من اسم المستخدم أو الباسورد)")
+        except Exception as e:
+            st.warning("تأكد أن أسماء الأعمدة في صفحة Users هي: 'اسم المستخدم' و 'كلمة المرور' و 'الصلاحية'")
+else:
+    # الواجهة بعد الدخول الناجح
+    role = st.session_state.role
+    st.sidebar.success(f"مرحباً: {st.session_state.user_name}")
+    st.sidebar.write(f"الصلاحية: {role}")
+    
+    if st.sidebar.button("تسجيل الخروج"):
+        st.session_state.logged_in = False
+        st.rerun()
 
-# ---------------------------------------------------------
-# 5. Back Office: العمليات اليومية
-# ---------------------------------------------------------
-elif user_role == "Back Office":
-    st.header("⚙️ إدارة العمليات اليومية")
-    st.subheader("متابعة دورة حياة الطلبات")
-    df_orders = pd.DataFrame(st.session_state.db['orders'])
-    st.table(df_orders)
-        
+    # استكمال باقي النوافذ (الكنترول، المحاسب، إلخ) بناءً على الصلاحية
+    if role == "الكنترول":
+        st.header("🖥️ لوحة تحكم الإدارة")
+        st.info("أهلاً بك يا دكتور محمد في لوحة التحكم الرئيسية.")
+    elif role == "المحاسب":
+        st.header("💰 نافذة المحاسبة")
+    elif role == "مندوب":
+        st.header("🚚 تطبيق الميدان")
+    elif role == "تاجر":
+        st.header("🏪 نافذة التاجر")
